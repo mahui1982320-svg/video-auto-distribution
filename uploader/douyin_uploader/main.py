@@ -67,7 +67,10 @@ async def cookie_auth(account_file):
     # 抖音无头会撞反爬墙→content/upload 跳登录→误判 cookie 失效（间歇性）。校验必须有头。
     # 即便有头，页面慢/瞬时跳转仍会让 wait_for_url(精确URL,5s) 误判→重试3次+宽松判定(URL含 content/upload 且无登录文案)。
     # 允许 linux server 用户通过 env var 强制无头: DOUYIN_COOKIE_AUTH_HEADLESS=true
-    use_headless = os.environ.get("DOUYIN_COOKIE_AUTH_HEADLESS", "").lower() in ("1", "true", "yes")
+    use_headless = (
+        os.environ.get("DOUYIN_COOKIE_AUTH_HEADLESS", "").lower() in ("1", "true", "yes")
+        or (sys.platform.startswith("linux") and not os.environ.get("DISPLAY"))
+    )
     launch_kwargs = {"headless": use_headless, "channel": "chrome", "args": ["--no-sandbox", "--disable-blink-features=AutomationControlled"]}
     for _attempt in range(3):
         async with async_playwright() as playwright:
@@ -162,6 +165,13 @@ async def _save_douyin_qrcode(page: Page, account_file: str, previous_qrcode_pat
 
 
 async def _is_douyin_login_completed(page: Page) -> bool:
+    # 抖音扫码确认后不一定立即跳转，甚至会停留在根页面；登录 Cookie
+    # 比页面 URL/文案更稳定。sessionid_ss 是抖音 Web 登录态的核心标记。
+    cookies = await page.context.cookies()
+    cookie_names = {cookie.get("name") for cookie in cookies}
+    if cookie_names.intersection({"sessionid", "sessionid_ss"}):
+        return True
+
     # 登录后会跳到 creator-micro 下任意页（home/content 等）；登录页是 creator.douyin.com/ 根路径
     if "creator.douyin.com/creator-micro" not in page.url:
         return False
@@ -189,7 +199,7 @@ async def _wait_for_douyin_login(page: Page, account_file: str, qrcode_info: dic
     qrcode_path = Path(qrcode_info["image_path"]) if qrcode_info.get("image_path") else None
     original_url = page.url
     saw_2fa = False
-    for _ in range(max_checks):
+    for check_index in range(max_checks):
         if await _is_douyin_login_completed(page):
             douyin_logger.info(_msg("🥳", f"扫码成功，已经跳转到登录后页面: {page.url}"))
             return _build_login_result(True, "success", "抖音扫码登录成功", account_file, qrcode_info, page.url)
@@ -199,7 +209,7 @@ async def _wait_for_douyin_login(page: Page, account_file: str, qrcode_info: dic
             sms_input = page.locator('input[placeholder*="验证码"], input[type="tel"], input[placeholder*="短信"], input[placeholder*="手机号"]')
             if await sms_input.count() > 0:
                 if not saw_2fa:
-                    douyin_logger.warning(_msg("⚠️", f"检测到抖音短信/安全二次验证，请在弹出的浏览器中手动输入。等待 sessionid ({i}/{max_checks})"))
+                    douyin_logger.warning(_msg("⚠️", f"检测到抖音短信/安全二次验证，等待手机端完成验证 ({check_index + 1}/{max_checks})"))
                     saw_2fa = True
             await asyncio.sleep(poll_interval)
             continue

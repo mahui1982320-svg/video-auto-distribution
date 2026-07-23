@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import os
 from datetime import datetime
@@ -134,16 +135,33 @@ async def cookie_auth(account_file):
 
 
 async def _extract_tencent_qrcode_src(page: Page) -> str:
-    if hasattr(page, "frame_locator"):
-        try:
-            iframe_locator = page.frame_locator('[src*="login-for-iframe"]')
-            qr_code_img = iframe_locator.locator('div#app img.qrcode').first
-            await qr_code_img.wait_for(state="visible", timeout=30000)
-            src = await qr_code_img.get_attribute("src")
-            if src and src.startswith("data:image/"):
-                return src
-        except Exception:
-            pass
+    # The current WeChat login page embeds open.weixin.qq.com. Older versions
+    # used a data URL in a different iframe; support both forms.
+    for _ in range(60):
+        for frame in page.frames:
+            for selector in ("img.js_qrcode_img", "img.web_qrcode_img", "img.qrcode"):
+                images = frame.locator(selector)
+                try:
+                    count = await images.count()
+                except Exception:
+                    continue
+                for index in range(count):
+                    qr_code_img = images.nth(index)
+                    try:
+                        if not await qr_code_img.is_visible():
+                            continue
+                        src = await qr_code_img.evaluate("img => img.src")
+                        if src and src.startswith("data:image/"):
+                            return src
+                        if src and src.startswith(("http://", "https://")):
+                            # Screenshot the rendered QR element. Direct HTTP fetches
+                            # can be rejected because the WeChat endpoint requires
+                            # frame-specific cookies and a referer.
+                            encoded = base64.b64encode(await qr_code_img.screenshot(type="png")).decode("ascii")
+                            return f"data:image/png;base64,{encoded}"
+                    except Exception:
+                        continue
+        await asyncio.sleep(0.5)
 
     selector_candidates = [
         "div.login-qrcode-wrap img.qrcode",
@@ -515,18 +533,27 @@ class TencentBaseUploader(BaseVideoUploader):
                     continue
             return None
 
-        fi = await find_file_input()
-        if fi is None:
-            # 助手落在首页：先点「发表视频」唤出编辑器与上传控件
-            publish_btn = page.get_by_text("发表视频").first
-            if await publish_btn.count():
-                await publish_btn.click()
-                await asyncio.sleep(3)
-            for _ in range(20):
-                fi = await find_file_input()
-                if fi is not None:
-                    break
-                await asyncio.sleep(1)
+        fi = None
+        publish_clicked = False
+        # The assistant now redirects /post/create to /platform first and
+        # renders the "发表视频" entry asynchronously. Wait for either the
+        # real upload input or that entry instead of checking it only once.
+        for _ in range(60):
+            fi = await find_file_input()
+            if fi is not None:
+                break
+            if not publish_clicked:
+                publish_buttons = page.get_by_text("发表视频", exact=True)
+                try:
+                    for index in range(await publish_buttons.count()):
+                        button = publish_buttons.nth(index)
+                        if await button.is_visible():
+                            await button.click()
+                            publish_clicked = True
+                            break
+                except Exception:
+                    pass
+            await asyncio.sleep(1)
         if fi is None:
             raise RuntimeError("未找到视频号文件上传框")
         await fi.set_input_files(file_path)

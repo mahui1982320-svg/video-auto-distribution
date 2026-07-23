@@ -1,0 +1,26 @@
+[Unit]
+Description=SAU Team Publishing Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sau-team
+Group=sau-team
+WorkingDirectory=/opt/social-auto-upload
+EnvironmentFile=/etc/sau-team.env
+Environment=HOME=/opt/social-auto-upload
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/social-auto-upload/.cache/ms-playwright
+Environment=HF_ENDPOINT=https://hf-mirror.com
+Environment=HF_HOME=/opt/social-auto-upload/.cache/huggingface
+Environment=HF_HUB_DISABLE_XET=1
+ExecStart=/opt/social-auto-upload/.venv/bin/gunicorn --bind 127.0.0.1:5409 --workers 1 --threads 8 --timeout 3700 --access-logfile - --error-logfile - team_web:app
+Restart=always
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+ReadWritePaths=/opt/social-auto-upload/team_data /opt/social-auto-upload/cookies /opt/social-auto-upload/.cache
+
+[Install]
+WantedBy=multi-user.target

@@ -22,8 +22,11 @@ sau = "sau_cli:main"
 
 [project.optional-dependencies]
 web = [
-  "Flask[async]==3.1.1",
-  "flask-cors==6.0.0",
+ "Flask[async]==3.1.1",
+ "flask-cors==6.0.0",
+ "gunicorn>=23.0.0,<24",
+ "faster-whisper>=1.1,<2",
+ "jieba>=0.42,<1",
 ]
 
 [tool.uv]
