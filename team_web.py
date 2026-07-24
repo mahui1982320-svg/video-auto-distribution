@@ -442,7 +442,12 @@ def accounts_qrcode(account_id):
 @auth_required()
 def materials_list():
     with db() as conn:
-        rows = conn.execute("SELECT m.*,u.display_name uploader FROM materials m JOIN users u ON u.id=m.uploaded_by ORDER BY m.id DESC").fetchall()
+        rows = conn.execute("""
+            SELECT m.*, u.display_name uploader,
+                   COALESCE((SELECT j.status FROM jobs j WHERE j.material_id=m.id ORDER BY j.id DESC LIMIT 1), 'not_published') AS publish_status
+            FROM materials m JOIN users u ON u.id=m.uploaded_by
+            ORDER BY m.id DESC
+        """).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -568,11 +573,14 @@ def jobs_create():
     user = current_user()
     if not can_access_accounts(user, ids): return jsonify({"message": "包含无权使用的平台账号"}), 403
     with db() as conn:
-        selected_platforms = {row["platform"] for row in conn.execute(
-            f"SELECT platform FROM platform_accounts WHERE id IN ({','.join('?' * len(ids))})", ids
-        ).fetchall()}
+        selected_accounts = conn.execute(
+            f"SELECT id,platform,status FROM platform_accounts WHERE id IN ({','.join('?' * len(ids))})", ids
+        ).fetchall()
+        selected_platforms = {row["platform"] for row in selected_accounts}
         missing_platforms = [platform for platform in platforms if platform not in selected_platforms]
         if missing_platforms: return jsonify({"message": "每个发布平台都必须选择对应账号"}), 400
+        not_ready = [row["platform"] for row in selected_accounts if row["status"] != "ready"]
+        if not_ready: return jsonify({"message": f"请先完成以下平台账号的登录：{'、'.join(not_ready)}"}), 400
         if not conn.execute("SELECT 1 FROM materials WHERE id=?", (data.get("material_id"),)).fetchone(): return jsonify({"message": "素材不存在"}), 404
         cur = conn.execute("INSERT INTO jobs(material_id,title,description,tags,schedule_at,created_by,created_at) VALUES(?,?,?,?,?,?,?)", (data["material_id"], title, str(data.get("description", "")), str(data.get("tags", "")), data.get("schedule_at") or None, user["id"], utcnow()))
         job_id = cur.lastrowid
