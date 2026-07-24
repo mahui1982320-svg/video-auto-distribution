@@ -3,6 +3,8 @@ location = /publisher {
 }
 
 location /publisher/ {
+    # 视频素材可达 2GB；覆盖宿主 server 块的默认 20MB 限制。
+    client_max_body_size 2048m;
     proxy_pass http://127.0.0.1:5409/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
