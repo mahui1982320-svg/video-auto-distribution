@@ -43,8 +43,8 @@ team_web.py  ──► SQLite（用户、素材、任务、审计）
 ### 1. 准备环境
 
 ```bash
-git clone git@github.com:mahui1982320-svg/video-publisher.git
-cd video-publisher
+git clone git@github.com:mahui1982320-svg/video-auto-distribution.git
+cd video-auto-distribution
 python3.10 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
