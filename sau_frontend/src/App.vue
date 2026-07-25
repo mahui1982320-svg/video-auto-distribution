@@ -2,8 +2,8 @@
   <div v-if="!user" class="login-page">
     <div class="login-panel">
       <div class="brand-mark">小羊</div>
-      <h1>小羊养老 · 内容分发中心</h1>
-      <p>小羊养老内部多平台视频发布系统</p>
+      <h1>视频全自动分发</h1>
+      <p>面向团队运营的多平台视频发布系统</p>
       <el-form @submit.prevent="doLogin" size="large">
         <el-form-item><el-input v-model="loginForm.username" placeholder="用户名" prefix-icon="User" /></el-form-item>
         <el-form-item><el-input v-model="loginForm.password" type="password" show-password placeholder="密码" prefix-icon="Lock" @keyup.enter="doLogin" /></el-form-item>
@@ -14,7 +14,7 @@
 
   <el-container v-else class="shell">
     <el-aside width="232px" class="sidebar">
-      <div class="brand"><span class="brand-mark small">小羊</span><div><b>小羊养老</b><small>内容分发中心</small></div></div>
+      <div class="brand"><span class="brand-mark small">视频</span><div><b>视频全自动分发</b><small>多平台发布控制台</small></div></div>
       <el-menu :default-active="page" @select="selectPage">
         <el-menu-item index="dashboard"><el-icon><DataBoard /></el-icon>工作台</el-menu-item>
         <el-menu-item index="publish"><el-icon><Promotion /></el-icon>新建发布</el-menu-item>
@@ -89,7 +89,7 @@
     </el-container>
   </el-container>
 
-  <el-dialog v-model="accountDialog" title="添加并登录平台账号" width="500px" :close-on-click-modal="false"><el-alert title="操作步骤：选择平台 → 填写便于识别的备注名 → 创建后使用平台 App 扫码登录" type="info" :closable="false" show-icon /><el-form label-position="top" class="account-form"><el-form-item label="第 1 步：选择平台"><el-select v-model="accountForm.platform"><el-option v-for="p in platforms" :key="p.value" :label="p.label" :value="p.value" /></el-select></el-form-item><el-form-item label="第 2 步：填写账号备注名"><el-input v-model="accountForm.display_name" placeholder="例如：小羊养老抖音主账号" /><small class="field-tip">这里只是系统内显示的名称，不需要填写平台用户名或密码。</small></el-form-item></el-form><template #footer><el-button @click="accountDialog=false">取消</el-button><el-button type="primary" :loading="accountCreating" @click="createAccount">创建并扫码登录</el-button></template></el-dialog>
+  <el-dialog v-model="accountDialog" title="添加并登录平台账号" width="500px" :close-on-click-modal="false"><el-alert title="操作步骤：选择平台 → 填写便于识别的备注名 → 创建后使用平台 App 扫码登录" type="info" :closable="false" show-icon /><el-form label-position="top" class="account-form"><el-form-item label="第 1 步：选择平台"><el-select v-model="accountForm.platform"><el-option v-for="p in platforms" :key="p.value" :label="p.label" :value="p.value" /></el-select></el-form-item><el-form-item label="第 2 步：填写账号备注名"><el-input v-model="accountForm.display_name" placeholder="例如：运营抖音主账号" /><small class="field-tip">这里只是系统内显示的名称，不需要填写平台用户名或密码。</small></el-form-item></el-form><template #footer><el-button @click="accountDialog=false">取消</el-button><el-button type="primary" :loading="accountCreating" @click="createAccount">创建并扫码登录</el-button></template></el-dialog>
   <el-dialog v-model="userDialog" title="添加员工" width="460px"><el-form label-position="top"><el-form-item label="姓名"><el-input v-model="userForm.display_name" /></el-form-item><el-form-item label="用户名"><el-input v-model="userForm.username" /></el-form-item><el-form-item label="初始密码"><el-input v-model="userForm.password" type="password" show-password placeholder="至少10位" /></el-form-item><el-form-item label="角色"><el-radio-group v-model="userForm.role"><el-radio value="operator">操作员</el-radio><el-radio value="admin">管理员</el-radio></el-radio-group></el-form-item></el-form><template #footer><el-button @click="userDialog=false">取消</el-button><el-button type="primary" @click="createUser">创建</el-button></template></el-dialog>
   <el-dialog v-model="roleDialog" title="修改员工角色" width="420px"><p>正在修改：{{ roleEdit.display_name }}</p><el-radio-group v-model="roleEdit.role"><el-radio value="operator">操作员：只能使用被分配的平台账号</el-radio><el-radio value="admin">管理员：可管理员工、账号和发布任务</el-radio></el-radio-group><template #footer><el-button @click="roleDialog=false">取消</el-button><el-button type="primary" @click="saveUserRole">保存角色</el-button></template></el-dialog>
   <el-dialog v-model="accessDialog" title="分配账号使用权限" width="500px"><el-checkbox-group v-model="accessUserIds" class="access-list"><el-checkbox v-for="u in operatorUsers" :key="u.id" :value="u.id" border>{{ u.display_name }}（{{ u.username }}）</el-checkbox></el-checkbox-group><template #footer><el-button @click="accessDialog=false">取消</el-button><el-button type="primary" @click="saveAccess">保存权限</el-button></template></el-dialog>

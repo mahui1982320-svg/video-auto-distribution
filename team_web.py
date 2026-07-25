@@ -490,7 +490,7 @@ def analyze_video_content(video_path: Path) -> dict:
         tags = [word for word in jieba.analyse.extract_tags(transcript, topK=8) if len(word) >= 2 and word not in stopwords][:5]
         if "北京" in transcript and "居家" in transcript and any(word in transcript for word in ("照护", "养老", "陪护")):
             title = "北京居家上门照护服务介绍"
-            description = "本视频介绍小羊养老在北京提供的居家上门照护服务，包括小时看护、短期陪护和24小时全天陪护。护理员经过系统培训和严格考核，可协助老人洗漱、用餐、擦身并提供陪伴；同时可配套护理床、轮椅、助行器等康复辅具，帮助子女安心工作、老人安心养老。"
+            description = "系统已根据视频内容生成一份发布简介建议。请运营人员结合实际素材、平台规则和品牌表达进行核对与修改后再发布。"
             tags = ["北京养老", "居家照护", "上门护理", "老人陪护", "康复辅具"]
         elif "环境音" in transcript and "风险" in transcript:
             title = "环境音识别如何判断居家风险"
