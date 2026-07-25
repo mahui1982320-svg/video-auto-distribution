@@ -78,6 +78,7 @@ def init_db() -> None:
               platform TEXT NOT NULL,
               account_name TEXT NOT NULL,
               display_name TEXT NOT NULL,
+              owner_user_id INTEGER REFERENCES users(id),
               status TEXT NOT NULL DEFAULT 'not_logged_in',
               created_by INTEGER NOT NULL REFERENCES users(id),
               created_at TEXT NOT NULL,
@@ -132,6 +133,9 @@ def init_db() -> None:
         for name in ("transcript", "analysis_title", "analysis_description", "analysis_tags"):
             if name not in material_columns:
                 conn.execute(f"ALTER TABLE materials ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+        account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(platform_accounts)").fetchall()}
+        if "owner_user_id" not in account_columns:
+            conn.execute("ALTER TABLE platform_accounts ADD COLUMN owner_user_id INTEGER REFERENCES users(id)")
         if not conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             password = os.getenv("SAU_ADMIN_PASSWORD")
             if not password:
@@ -142,6 +146,8 @@ def init_db() -> None:
                 "INSERT INTO users(username,display_name,password_hash,role,created_at) VALUES(?,?,?,?,?)",
                 ("admin", "系统管理员", generate_password_hash(password), "admin", utcnow()),
             )
+        # 旧账号没有归属信息时，先归到创建人名下；管理员可在页面中重新分配。
+        conn.execute("UPDATE platform_accounts SET owner_user_id=created_by WHERE owner_user_id IS NULL")
 
 
 def audit(action: str, detail: str = "", user_id: int | None = None) -> None:
@@ -284,7 +290,8 @@ def users_update(user_id):
 
 def account_visible_sql(user):
     if user["role"] == "admin": return "", ()
-    return " WHERE a.id IN (SELECT account_id FROM user_account_access WHERE user_id=?)", (user["id"],)
+    # 平台登录凭证是编导统一维护的敏感资产，普通员工不直接查看或切换。
+    return " WHERE 1=0", ()
 
 
 @app.get("/api/accounts")
@@ -292,7 +299,12 @@ def account_visible_sql(user):
 def accounts_list():
     user = current_user(); where, params = account_visible_sql(user)
     with db() as conn:
-        rows = conn.execute(f"SELECT a.* FROM platform_accounts a{where} ORDER BY a.id DESC", params).fetchall()
+        rows = conn.execute(f"""
+            SELECT a.*, owner.display_name owner_display_name, owner.username owner_username
+            FROM platform_accounts a
+            LEFT JOIN users owner ON owner.id=a.owner_user_id
+            {where} ORDER BY a.id DESC
+        """, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -302,14 +314,36 @@ def accounts_create():
     data = request.get_json(silent=True) or {}; platform = str(data.get("platform", ""))
     display_name = str(data.get("display_name", "")).strip()
     account_name = secure_filename(str(data.get("account_name", "")).strip()) or f"account_{uuid.uuid4().hex[:10]}"
+    owner_user_id = data.get("owner_user_id") or session["user_id"]
     if platform not in ALLOWED_PLATFORMS: return jsonify({"message": "请选择发布平台"}), 400
     if not display_name: return jsonify({"message": "请填写账号备注名"}), 400
     try:
         with db() as conn:
-            cur = conn.execute("INSERT INTO platform_accounts(platform,account_name,display_name,created_by,created_at) VALUES(?,?,?,?,?)", (platform, account_name, display_name, session["user_id"], utcnow()))
-        audit("account.create", f"{platform}:{account_name}")
+            owner = conn.execute("SELECT id,active FROM users WHERE id=?", (owner_user_id,)).fetchone()
+            if not owner or not owner["active"]:
+                return jsonify({"message": "请选择有效的所属同事"}), 400
+            cur = conn.execute("INSERT INTO platform_accounts(platform,account_name,display_name,owner_user_id,created_by,created_at) VALUES(?,?,?,?,?,?)", (platform, account_name, display_name, owner_user_id, session["user_id"], utcnow()))
+        audit("account.create", f"{platform}:{account_name}:owner={owner_user_id}")
         return jsonify({"id": cur.lastrowid, "account_name": account_name}), 201
     except sqlite3.IntegrityError: return jsonify({"message": "账号创建冲突，请重试"}), 409
+
+
+@app.patch("/api/accounts/<int:account_id>/owner")
+@auth_required(admin=True)
+def accounts_owner_update(account_id):
+    owner_user_id = (request.get_json(silent=True) or {}).get("owner_user_id")
+    try:
+        owner_user_id = int(owner_user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "请选择所属同事"}), 400
+    with db() as conn:
+        account = conn.execute("SELECT id FROM platform_accounts WHERE id=?", (account_id,)).fetchone()
+        owner = conn.execute("SELECT id,active FROM users WHERE id=?", (owner_user_id,)).fetchone()
+        if not account: return jsonify({"message": "平台账号不存在"}), 404
+        if not owner or not owner["active"]: return jsonify({"message": "所属同事不存在或已停用"}), 400
+        conn.execute("UPDATE platform_accounts SET owner_user_id=? WHERE id=?", (owner_user_id, account_id))
+    audit("account.owner.update", f"{account_id}:{owner_user_id}")
+    return jsonify({"ok": True})
 
 
 @app.put("/api/accounts/<int:account_id>/access")
@@ -563,19 +597,26 @@ def can_access_accounts(user, account_ids):
 
 
 @app.post("/api/jobs")
-@auth_required()
+@auth_required(admin=True)
 def jobs_create():
     data = request.get_json(silent=True) or {}; ids = list(dict.fromkeys(int(x) for x in data.get("account_ids", [])))
     platforms = list(dict.fromkeys(str(x) for x in data.get("platforms", []) if str(x)))
     title = str(data.get("title", "")).strip()
+    owner_user_id = data.get("owner_user_id")
     if not platforms: return jsonify({"message": "请选择至少一个发布平台"}), 400
     if not ids or not title: return jsonify({"message": "请选择发布账号并填写标题"}), 400
     user = current_user()
-    if not can_access_accounts(user, ids): return jsonify({"message": "包含无权使用的平台账号"}), 403
+    try:
+        owner_user_id = int(owner_user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "请先选择要发布的同事"}), 400
     with db() as conn:
         selected_accounts = conn.execute(
-            f"SELECT id,platform,status FROM platform_accounts WHERE id IN ({','.join('?' * len(ids))})", ids
+            f"SELECT id,platform,status,owner_user_id FROM platform_accounts WHERE id IN ({','.join('?' * len(ids))})", ids
         ).fetchall()
+        if len(selected_accounts) != len(ids): return jsonify({"message": "包含不存在的平台账号"}), 400
+        wrong_owner = [row["id"] for row in selected_accounts if row["owner_user_id"] != owner_user_id]
+        if wrong_owner: return jsonify({"message": "所选账号不属于当前同事，请重新选择"}), 400
         selected_platforms = {row["platform"] for row in selected_accounts}
         missing_platforms = [platform for platform in platforms if platform not in selected_platforms]
         if missing_platforms: return jsonify({"message": "每个发布平台都必须选择对应账号"}), 400
@@ -597,7 +638,12 @@ def jobs_list():
         result = []
         for job in jobs:
             item = dict(job)
-            item["targets"] = [dict(x) for x in conn.execute("SELECT t.*,a.platform,a.display_name account_display FROM job_targets t JOIN platform_accounts a ON a.id=t.account_id WHERE t.job_id=?", (job["id"],)).fetchall()]
+            item["targets"] = [dict(x) for x in conn.execute("""
+                SELECT t.*,a.platform,a.display_name account_display,owner.display_name owner_display
+                FROM job_targets t JOIN platform_accounts a ON a.id=t.account_id
+                LEFT JOIN users owner ON owner.id=a.owner_user_id
+                WHERE t.job_id=?
+            """, (job["id"],)).fetchall()]
             result.append(item)
     return jsonify(result)
 

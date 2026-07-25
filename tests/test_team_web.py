@@ -51,11 +51,13 @@ class TeamWebTest(unittest.TestCase):
 
         invalid = self.client.post("/api/jobs", headers=headers, json={"material_id": material.get_json()["id"], "title": "验收", "account_ids": [account_id]})
         self.assertEqual(invalid.status_code, 400)
+        with self.module.db() as conn:
+            conn.execute("UPDATE platform_accounts SET status='ready' WHERE id=?", (account_id,))
         with mock.patch.object(self.module.job_queue, "put") as enqueue:
             created = self.client.post("/api/jobs", headers=headers, json={
                 "material_id": material.get_json()["id"], "title": "完整流程验收",
                 "description": "自动化测试", "tags": "测试", "platforms": ["douyin"],
-                "account_ids": [account_id],
+                "account_ids": [account_id], "owner_user_id": 1,
             })
         self.assertEqual(created.status_code, 201)
         enqueue.assert_called_once_with(created.get_json()["id"])
@@ -80,8 +82,10 @@ class TeamWebTest(unittest.TestCase):
 
         published_material = self.client.post("/api/materials", headers=headers, data={"file": (io.BytesIO(b"publish"), "retry.mp4")}, content_type="multipart/form-data").get_json()["id"]
         published_account = self.client.post("/api/accounts", headers=headers, json={"platform": "douyin", "display_name": "重试账号"}).get_json()["id"]
+        with self.module.db() as conn:
+            conn.execute("UPDATE platform_accounts SET status='ready' WHERE id=?", (published_account,))
         with mock.patch.object(self.module.job_queue, "put"):
-            job_id = self.client.post("/api/jobs", headers=headers, json={"material_id": published_material, "title": "重试测试", "platforms": ["douyin"], "account_ids": [published_account]}).get_json()["id"]
+            job_id = self.client.post("/api/jobs", headers=headers, json={"material_id": published_material, "title": "重试测试", "platforms": ["douyin"], "account_ids": [published_account], "owner_user_id": 1}).get_json()["id"]
         with self.module.db() as conn:
             conn.execute("UPDATE jobs SET status='partial_failed' WHERE id=?", (job_id,))
             conn.execute("UPDATE job_targets SET status='failed',output='test error' WHERE job_id=?", (job_id,))
@@ -105,6 +109,26 @@ class TeamWebTest(unittest.TestCase):
         upload = self.client.post("/api/materials", headers=headers, data={"file": (io.BytesIO(b"fake-video"), "demo.mp4")}, content_type="multipart/form-data")
         self.assertEqual(upload.status_code, 201)
         self.assertEqual(len(self.client.get("/api/materials").get_json()), 1)
+
+    def test_central_account_owner_and_publish_guard(self):
+        csrf = self.login(); headers = {"X-CSRF-Token": csrf}
+        alice = self.client.post("/api/users", headers=headers, json={"username": "alice", "display_name": "小王", "password": "AlicePass!123", "role": "operator"}).get_json()["id"]
+        bob = self.client.post("/api/users", headers=headers, json={"username": "bob", "display_name": "小李", "password": "BobPass!1234", "role": "operator"}).get_json()["id"]
+        account = self.client.post("/api/accounts", headers=headers, json={"platform": "douyin", "display_name": "小王抖音号", "owner_user_id": alice})
+        self.assertEqual(account.status_code, 201)
+        account_id = account.get_json()["id"]
+        with self.module.db() as conn:
+            conn.execute("UPDATE platform_accounts SET status='ready' WHERE id=?", (account_id,))
+        listed = next(x for x in self.client.get("/api/accounts").get_json() if x["id"] == account_id)
+        self.assertEqual(listed["owner_user_id"], alice)
+        self.assertEqual(listed["owner_display_name"], "小王")
+        material_id = self.client.post("/api/materials", headers=headers, data={"file": (io.BytesIO(b"owner-test"), "owner.mp4")}, content_type="multipart/form-data").get_json()["id"]
+        wrong = self.client.post("/api/jobs", headers=headers, json={"material_id": material_id, "title": "错误归属", "platforms": ["douyin"], "account_ids": [account_id], "owner_user_id": bob})
+        self.assertEqual(wrong.status_code, 400)
+        with mock.patch.object(self.module.job_queue, "put") as enqueue:
+            correct = self.client.post("/api/jobs", headers=headers, json={"material_id": material_id, "title": "集中发布", "platforms": ["douyin"], "account_ids": [account_id], "owner_user_id": alice})
+        self.assertEqual(correct.status_code, 201)
+        enqueue.assert_called_once_with(correct.get_json()["id"])
 
 
 if __name__ == "__main__":
