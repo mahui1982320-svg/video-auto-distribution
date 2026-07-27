@@ -526,6 +526,12 @@ class TencentBaseUploader(BaseVideoUploader):
         async def find_file_input():
             for fr in page.frames:  # 主 frame + 所有 iframe（视频号编辑器可能在 iframe 内）
                 try:
+                    # Newer Video Channels pages may render both a cover input
+                    # and a video input. Prefer the latter when the accept hint is
+                    # available, then retain the old generic fallback.
+                    video_fi = fr.locator('input[type="file"][accept*="video"]')
+                    if await video_fi.count():
+                        return video_fi.first
                     fi = fr.locator('input[type="file"]')
                     if await fi.count():
                         return fi.first
@@ -533,29 +539,60 @@ class TencentBaseUploader(BaseVideoUploader):
                     continue
             return None
 
+        async def click_upload_entry() -> bool:
+            """Open the current Video Channels upload entry.
+
+            Video Channels has used both "发表视频" and "发表"/"发布视频" in
+            different account/page variants. Some variants create the file input
+            only while handling the click, so wait for a file chooser as well as
+            scanning the DOM on the next pass.
+            """
+            entry_names = ("发表视频", "发布视频", "上传视频", "发视频", "发表", "发布")
+            for name in entry_names:
+                candidates = (
+                    page.get_by_role("button", name=name, exact=True),
+                    page.get_by_text(name, exact=True),
+                )
+                for candidates_for_name in candidates:
+                    try:
+                        count = await candidates_for_name.count()
+                    except Exception:
+                        continue
+                    for index in range(count):
+                        candidate = candidates_for_name.nth(index)
+                        try:
+                            if not await candidate.is_visible():
+                                continue
+                            async with page.expect_file_chooser(timeout=2500) as chooser_info:
+                                await candidate.click(timeout=5000)
+                            chooser = await chooser_info.value
+                            await chooser.set_files(file_path)
+                            return True
+                        except Exception:
+                            # Most entry buttons open a panel rather than the OS
+                            # chooser. That is still useful: the next loop sees its
+                            # newly-rendered input element.
+                            continue
+            return False
+
         fi = None
-        publish_clicked = False
-        # The assistant now redirects /post/create to /platform first and
-        # renders the "发表视频" entry asynchronously. Wait for either the
-        # real upload input or that entry instead of checking it only once.
+        # Video Channels can redirect /post/create to its workbench and render a
+        # different upload entry per account. Wait for a real input, or activate
+        # one of the known entries until that input is created.
         for _ in range(60):
             fi = await find_file_input()
             if fi is not None:
                 break
-            if not publish_clicked:
-                publish_buttons = page.get_by_text("发表视频", exact=True)
-                try:
-                    for index in range(await publish_buttons.count()):
-                        button = publish_buttons.nth(index)
-                        if await button.is_visible():
-                            await button.click()
-                            publish_clicked = True
-                            break
-                except Exception:
-                    pass
+            if await click_upload_entry():
+                return
             await asyncio.sleep(1)
         if fi is None:
-            raise RuntimeError("未找到视频号文件上传框")
+            # Give operations a useful distinction between an expired session and
+            # a Video Channels UI change. Do not expose page HTML or credentials.
+            login_page = "/login" in page.url or "login.html" in page.url
+            if login_page:
+                raise RuntimeError("视频号登录态已失效，请重新扫码登录后再发布")
+            raise RuntimeError(f"未找到视频号文件上传框（当前页面：{page.url}）")
         await fi.set_input_files(file_path)
 
     async def set_short_title(self, page: Page, title: str, short_title: str | None = None) -> None:
