@@ -706,7 +706,10 @@ def run_job(job_id):
         except Exception as exc:
             status, output = "failed", str(exc)
         any_failed |= status == "failed"
-        with db() as conn: conn.execute("UPDATE job_targets SET status=?,output=?,finished_at=? WHERE id=?", (status, output, utcnow(), target["target_id"]))
+        with db() as conn:
+            conn.execute("UPDATE job_targets SET status=?,output=?,finished_at=? WHERE id=?", (status, output, utcnow(), target["target_id"]))
+            if status == "failed" and target["platform"] == "tencent" and "登录态已失效" in output:
+                conn.execute("UPDATE platform_accounts SET status='not_logged_in' WHERE id=?", (target["id"],))
     with db() as conn: conn.execute("UPDATE jobs SET status=?,finished_at=? WHERE id=?", ("partial_failed" if any_failed else "success", utcnow(), job_id))
 
 

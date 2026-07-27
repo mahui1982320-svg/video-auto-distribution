@@ -117,11 +117,17 @@ async def cookie_auth(account_file):
 
             login_markers = [
                 page.get_by_text("扫码登录", exact=True).first,
+                page.get_by_text("登录视频号助手", exact=True).first,
                 page.get_by_text("发表视频", exact=True).first,
                 page.get_by_role("button", name="发表").first,
             ]
 
-            if await login_markers[0].count():
+            if (
+                "/login" in page.url
+                or "login.html" in page.url
+                or await login_markers[0].count()
+                or await login_markers[1].count()
+            ):
                 tencent_logger.info(_msg("🥹", "cookie 已失效，得重新登录一下"))
                 return False
 
