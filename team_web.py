@@ -425,7 +425,9 @@ def accounts_login(account_id):
                 old.kill()
                 old.wait(timeout=2)
         clear_account_qrcodes(account)
-        sau_command = [str(APP_DIR / ".venv" / "bin" / "sau"), account["platform"], "login", "--account", account["account_name"]]
+        # Keep login and publishing on the same checked-out source tree so new
+        # uploader fixes take effect consistently for every account.
+        sau_command = [str(APP_DIR / ".venv" / "bin" / "python"), str(APP_DIR / "sau_cli.py"), account["platform"], "login", "--account", account["account_name"]]
         # 抖音会对云服务器的无头浏览器登录施加风控。服务器已安装 Xvfb，
         # 用虚拟显示器运行有界面浏览器，可保留真实浏览器登录流程而无需开放桌面端口。
         if account["platform"] == "douyin":
