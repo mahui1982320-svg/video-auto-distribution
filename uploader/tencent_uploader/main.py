@@ -114,6 +114,11 @@ async def cookie_auth(account_file):
             page = await context.new_page()
             await page.goto(TENCENT_UPLOAD_URL)
             await page.wait_for_url(TENCENT_UPLOAD_URL, timeout=5000)
+            # Video Channels initially keeps the requested /post/create URL,
+            # then redirects an expired session to login.html about one second
+            # later. Validate after that redirect window instead of accepting the
+            # transient URL as an authenticated publishing session.
+            await page.wait_for_timeout(2500)
 
             login_markers = [
                 page.get_by_text("扫码登录", exact=True).first,
