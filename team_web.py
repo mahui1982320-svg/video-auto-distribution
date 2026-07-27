@@ -690,7 +690,10 @@ def run_job(job_id):
     any_failed = False
     for target in targets:
         with db() as conn: conn.execute("UPDATE job_targets SET status='running',started_at=? WHERE id=?", (utcnow(), target["target_id"]))
-        cmd = [str(APP_DIR / ".venv/bin/sau"), target["platform"], "upload-video", "--account", target["account_name"], "--file", str(MEDIA_DIR / job["stored_name"]), "--title", job["title"], "--desc", job["description"]]
+        # Execute the checked-out project source explicitly. The installed `sau`
+        # console entry point can otherwise import a stale copy from site-packages
+        # after an application update.
+        cmd = [str(APP_DIR / ".venv/bin/python"), str(APP_DIR / "sau_cli.py"), target["platform"], "upload-video", "--account", target["account_name"], "--file", str(MEDIA_DIR / job["stored_name"]), "--title", job["title"], "--desc", job["description"]]
         if job["tags"]: cmd += ["--tags", job["tags"]]
         if job["schedule_at"] and target["platform"] != "youtube": cmd += ["--schedule", job["schedule_at"].replace("T", " ")[:16]]
         if target["platform"] == "bilibili": cmd += ["--tid", "249"]
