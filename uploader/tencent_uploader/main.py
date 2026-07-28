@@ -153,25 +153,7 @@ async def cookie_auth(account_file):
             page = await context.new_page()
             await page.goto(TENCENT_UPLOAD_URL)
             await page.wait_for_url(TENCENT_UPLOAD_URL, timeout=5000)
-            # Video Channels initially keeps the requested /post/create URL,
-            # then redirects an expired session to login.html about one second
-            # later. Validate after that redirect window instead of accepting the
-            # transient URL as an authenticated publishing session.
-            await page.wait_for_timeout(2500)
-
-            login_markers = [
-                page.get_by_text("扫码登录", exact=True).first,
-                page.get_by_text("登录视频号助手", exact=True).first,
-                page.get_by_text("发表视频", exact=True).first,
-                page.get_by_role("button", name="发表").first,
-            ]
-
-            if (
-                "/login" in page.url
-                or "login.html" in page.url
-                or await login_markers[0].count()
-                or await login_markers[1].count()
-            ):
+            if await _is_tencent_login_required(page):
                 tencent_logger.info(_msg("🥹", "cookie 已失效，得重新登录一下"))
                 return False
 
@@ -183,6 +165,19 @@ async def cookie_auth(account_file):
         finally:
             if context:
                 await context.close()
+
+
+async def _is_tencent_login_required(page: Page, settle_ms: int = 2500) -> bool:
+    """Check authorization in an already-open Video Channels browser context."""
+    # Video Channels initially keeps /post/create then redirects an expired
+    # session to login.html about one second later.
+    await page.wait_for_timeout(settle_ms)
+    return (
+        "/login" in page.url
+        or "login.html" in page.url
+        or await page.get_by_text("扫码登录", exact=True).first.count()
+        or await page.get_by_text("登录视频号助手", exact=True).first.count()
+    )
 
 
 async def _extract_tencent_qrcode_src(page: Page) -> str:
@@ -441,7 +436,11 @@ async def tencent_cookie_gen(
             if result["success"]:
                 await asyncio.sleep(2)
                 await context.storage_state(path=account_file)
-                if not await cookie_auth(account_file):
+                # Do not call cookie_auth here: it opens a second Chromium
+                # process and would lock this account's persistent profile while
+                # the successful QR-login browser is still open.
+                await page.goto(TENCENT_UPLOAD_URL, wait_until="domcontentloaded", timeout=120000)
+                if await _is_tencent_login_required(page):
                     result = _build_login_result(
                         False,
                         "cookie_invalid",
